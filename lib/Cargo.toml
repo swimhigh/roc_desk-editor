@@ -1,12 +1,17 @@
-﻿[package]
+[package]
 name = "roc_desk_editor"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-roc_desk_core = { git = "https://github.com/swimhigh/roc_desk-common", package = "roc_desk_core", tag = "common-v0.2.6" }
-roc_desk_common = { git = "https://github.com/swimhigh/roc_desk-common", package = "roc_desk_common", tag = "common-v0.2.6" }
+roc_desk_core = { git = "https://github.com/swimhigh/roc_desk-common", package = "roc_desk_core", tag = "common-v0.4.0" }
+roc_desk_common = { git = "https://github.com/swimhigh/roc_desk-common", package = "roc_desk_common", tag = "common-v0.4.0" }
+roc_desk_explorer = { git = "https://github.com/swimhigh/roc_desk-explorer", package = "roc_desk_explorer", tag = "v0.2.0" }
+tauri = { version = "2" }
+tokio = { version = "1", features = ["sync"] }
+serde = { version = "1", features = ["derive"] }
+base64 = "0.22"
 
-
-
-
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams"] }
+windows-future = { version = "0.2.1", features = ["std"] }

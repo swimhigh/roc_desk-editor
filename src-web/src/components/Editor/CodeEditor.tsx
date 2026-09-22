@@ -24,13 +24,19 @@ import { fsService, localFileService } from "../../services/fsService";
 import { symbolService } from "../../services/symbolService";
 import type { SymbolLocation } from "../../types/bindings";
 import { FileStack } from "lucide-react";
-import { useExplorerStore } from "../../stores/explorerStore";
 
-/** 只会有一份 CodeEditor 挂载（App.tsx 的"无工作区"/"游离文件"/"工作区"三种编辑器壳
- * 是同一棵渲染树的不同分支，不会同时存在两份），下面给 Monaco 全局注册一次的"转到
- * 定义/声明" provider 拿不到 React props，只能靠这个模块级 ref 读到"当前是哪个工作区"
- * （游离文件模式没有工作区概念，ref 是 null 时 provider 直接不生效）。 */
+/** 只会有一份 CodeEditor 挂载，下面给 Monaco 全局注册一次的"转到定义/声明"
+ * provider 拿不到 React props，只能靠这两个模块级 ref 读到"当前的符号索引
+ * 键是什么"：
+ * - `activeWorkspaceIdRef`：真正的工作区 id（`fs_*` 命令读写要用），没有工作区
+ *   （游离文件/独立编辑器）时是 null。
+ * - `activeSymbolRootRef`：符号索引实际用的 key——有工作区时等于工作区 id，
+ *   没有工作区但打开了一个本地根目录（独立编辑器/工作区之外的"游离文件夹"）时
+ *   退化成 `rootPath`。这是本工具相对宿主版本的一个改进：宿主里符号索引只认
+ *   `workspaceId`，脱离工作区（独立编辑器）就完全没有"转到定义"；这里只要打开
+ *   了一个本地根目录就能用，即使不属于任何工作区。 */
 const activeWorkspaceIdRef: { current: string | null } = { current: null };
+const activeSymbolRootRef: { current: string | null } = { current: null };
 /** provideDefinition 为每个候选位置生成的 Monaco Uri -> 真实符号位置的映射，供
  * `registerEditorOpener` 把"要打开哪个 Uri"还原回真实文件路径。不能反向解析
  * monaco.Uri（`@monaco-editor/react` 用 `Uri.parse(path)` 建模型，Windows 路径
@@ -40,7 +46,7 @@ const uriToSymbolLocation = new Map<string, SymbolLocation>();
 let definitionProviderRegistered = false;
 /** Monaco 内置支持右键"转到定义/转到声明"的语言 id（和 utils/language.ts 里
  * detectLanguage 产出的 id 对齐）——本轮符号索引只覆盖这几种语言，见
- * src-tauri/src/symbols/mod.rs。 */
+ * roc_desk_common::symbols。 */
 const DEFINITION_LANGUAGES = ["c", "cpp", "rust", "python", "go", "javascript", "typescript"];
 
 function registerGoToDefinitionOnce(monaco: typeof import("monaco-editor")) {
@@ -51,13 +57,13 @@ function registerGoToDefinitionOnce(monaco: typeof import("monaco-editor")) {
     model: import("monaco-editor").editor.ITextModel,
     position: import("monaco-editor").Position,
   ) => {
-    const workspaceId = activeWorkspaceIdRef.current;
-    if (!workspaceId) return null;
+    const root = activeSymbolRootRef.current;
+    if (!root) return null;
     const word = model.getWordAtPosition(position);
     if (!word) return null;
     let locations: SymbolLocation[];
     try {
-      locations = await symbolService.goToDefinition(workspaceId, word.word);
+      locations = await symbolService.goToDefinition(root, word.word);
     } catch {
       return null;
     }
@@ -73,17 +79,18 @@ function registerGoToDefinitionOnce(monaco: typeof import("monaco-editor")) {
   monaco.languages.registerDeclarationProvider(DEFINITION_LANGUAGES, { provideDeclaration: resolve });
 
   // 目标位置在另一个还没打开的文件里时，Monaco 自己不知道怎么"打开"一个任意路径——
-  // 这个 opener 就是那座桥：查表拿到真实路径后，复用 Explorer 单击打开文件的同一条
-  // 路径（editorStore.openPreview），打开后再跳到目标行（复用搜索结果跳转用的
-  // pendingReveal 机制，见下面 CodeEditor 组件里消费 pendingReveal 的 effect）。
+  // 这个 opener 就是那座桥：查表拿到真实路径后，按"当前是不是真的工作区"分流到
+  // `openPreview`（工作区内文件，走 `fs_*`）或 `openStandaloneFile`（本地根目录/
+  // 游离文件，走 `local_*`），打开后再跳到目标行。
   monaco.editor.registerEditorOpener({
     openCodeEditor: (_source, resource) => {
       const loc = uriToSymbolLocation.get(resource.toString());
-      const workspaceId = activeWorkspaceIdRef.current;
-      if (!loc || !workspaceId) return false;
+      if (!loc) return false;
       void (async () => {
         const store = useEditorStore.getState();
-        await store.openPreview(workspaceId, loc.path);
+        const workspaceId = activeWorkspaceIdRef.current;
+        if (workspaceId) await store.openPreview(workspaceId, loc.path);
+        else await store.openStandaloneFile(loc.path);
         store.revealLine(loc.path, loc.line);
       })();
       return true;
@@ -92,19 +99,25 @@ function registerGoToDefinitionOnce(monaco: typeof import("monaco-editor")) {
 }
 
 interface CodeEditorProps {
-  /** 没有打开工作区、只剩游离标签的极简编辑器壳（App.tsx 的"无工作区"三态之一）
-   * 传 `null`——这种情况下打开的所有标签必然都是 `origin: "standalone"`。 */
+  /** 没有打开工作区、只剩游离标签的极简编辑器壳传 `null`——这种情况下打开的
+   * 所有标签必然都是 `origin: "standalone"`。 */
   workspaceId: string | null;
   workspaceName: string;
   rootPath: string;
+  /** 点标签页/面包屑联动左侧文件树选中当前文件——仅在 `workspaceId` 非空时
+   * 触发。这个工具本身不知道"宿主的工作区文件树"长什么样（那是
+   * `roc_desk-workspace` 自己的状态），所以把这个行为做成可选回调，由嵌入方
+   * （宿主 / `roc_desk-workspace`）提供；不提供时退化成广播一个
+   * `roc:reveal-workspace` DOM 事件，方便嵌入方在别处监听。 */
+  onRevealInWorkspace?: (workspaceId: string, path: string) => void;
 }
 
 /**
- * 通用可编辑代码编辑器（DESIGN.md §3.1.4 / §2.2 选定的 Monaco 内核）。
+ * 通用可编辑代码编辑器（Monaco 内核）。
  * 本地缓冲区编辑 + Ctrl+S 保存回写 + mtime 冲突检测，JSON/Markdown/日志/配置文件等
  * 常见类型按扩展名给语言高亮（`utils/language.ts`），远程文件走 SFTP 写回但用户侧体验一致。
  */
-export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceName, rootPath }) => {
+export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceName, rootPath, onRevealInWorkspace }) => {
   const {
     buffers,
     diffs,
@@ -134,32 +147,37 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
   const highlightDecorationsRef = React.useRef<import("monaco-editor").editor.IEditorDecorationsCollection | null>(null);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   // Tab 右键菜单（参考 VS Code："关闭其他"/"关闭所有"/"关闭左侧的标签页"/
-  // "关闭右侧的标签页"，2026-08-29 需求）。
+  // "关闭右侧的标签页"）。
   const [tabMenu, setTabMenu] = React.useState<{ x: number; y: number; path: string } | null>(null);
   // 底部状态栏的光标位置（参考 VS Code 右下角 "行, 列"）——diff.path 换了（切标签/
   // Monaco 实例因 key={active.path} 重新挂载）时清空，避免残留上一个文件的坐标。
   const [cursorPos, setCursorPos] = React.useState<{ line: number; column: number } | null>(null);
 
-  // "转到定义/声明"（2026-09-16 需求）：让上面模块级注册的 Monaco provider 知道
-  // "现在是哪个工作区"；工作区一打开就顺带建一次符号索引（失败不打扰用户，只是
-  // 这个功能暂时用不了）。游离文件模式 workspaceId 是 null，provider 直接跳过。
+  // "转到定义/声明"：让上面模块级注册的 Monaco provider 知道"现在的符号索引键是
+  // 什么"；根目录一打开就顺带建一次符号索引（失败不打扰用户，只是这个功能暂时
+  // 用不了）。既没有工作区又没有本地根目录时（比如单个拖进来的游离文件，连
+  // 所在文件夹都不知道）两个 ref 都是 null，provider 直接跳过。
   React.useEffect(() => {
     activeWorkspaceIdRef.current = workspaceId;
   }, [workspaceId]);
   React.useEffect(() => {
-    if (!workspaceId) return;
-    void symbolService.buildIndex(workspaceId).catch(() => {});
-  }, [workspaceId]);
+    activeSymbolRootRef.current = workspaceId ?? (rootPath || null);
+  }, [workspaceId, rootPath]);
+  React.useEffect(() => {
+    const root = workspaceId ?? (rootPath || null);
+    if (!root) return;
+    void symbolService.buildIndex(root).catch(() => {});
+  }, [workspaceId, rootPath]);
 
-  // 切标签时光标/滚动位置丢失（2026-09-16 用户反馈）：根因是下面 `<Editor
-  // key={active.path}>` 每切一个文件都整个卸载重挂载一次 Monaco 实例——
-  // `@monaco-editor/react` 自带按路径缓存 view state 的机制（`saveViewState`
-  // prop，默认开启），但它只在传了 `keepCurrentModel` 时才会在卸载前把 view
-  // state 存下来（见该库源码，`keepCurrentModel` 为 false 时卸载分支直接
-  // dispose 掉 model，根本不存 view state），不传就是"每次切走都白丢"。
-  // 加 `keepCurrentModel` 解决了丢失问题，代价是模型不再随标签切换自动释放——
-  // 于是这里补一个"真正关掉标签才释放模型"的清理：比较 `order` 变化，对
-  // 消失的路径手动 dispose，避免一个会话里打开过的每个文件的模型永久占内存。
+  // 切标签时光标/滚动位置丢失：根因是下面 `<Editor key={active.path}>` 每切一个
+  // 文件都整个卸载重挂载一次 Monaco 实例——`@monaco-editor/react` 自带按路径缓存
+  // view state 的机制（`saveViewState` prop，默认开启），但它只在传了
+  // `keepCurrentModel` 时才会在卸载前把 view state 存下来（见该库源码，
+  // `keepCurrentModel` 为 false 时卸载分支直接 dispose 掉 model，根本不存 view
+  // state），不传就是"每次切走都白丢"。加 `keepCurrentModel` 解决了丢失问题，
+  // 代价是模型不再随标签切换自动释放——于是这里补一个"真正关掉标签才释放模型"的
+  // 清理：比较 `order` 变化，对消失的路径手动 dispose，避免一个会话里打开过的
+  // 每个文件的模型永久占内存。
   const prevOrderRef = React.useRef(order);
   React.useEffect(() => {
     const removed = prevOrderRef.current.filter((p) => !order.includes(p) && !isDiffId(p));
@@ -184,32 +202,26 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
   // 编辑相关的工具栏按钮对它们没意义。
   const isPreviewOnly = isImage || isPdf || isWord || isExcel || isExecutable || isJar || isLegacyOffice || isUnsupportedBinary;
 
+  // 点标签页/面包屑联动左侧文件树选中当前文件（参考 VS Code 的 "Auto Reveal"）。
+  // 游离文件（不属于工作区）没有对应的宿主文件树条目可选，改成广播一个通用事件
+  // 让本工具自己的本地文件树（LocalFileTree/StandaloneFileTree）去监听。工作区
+  // 场景下这个工具不知道宿主的文件树状态长什么样，交给 `onRevealInWorkspace`
+  // 回调，没提供就退化成广播事件（见 CodeEditorProps 注释）。
   const revealInExplorer = React.useCallback(async (path: string) => {
     if (!workspaceId) {
       window.dispatchEvent(new CustomEvent("roc:reveal-standalone", { detail: { path } }));
       return;
     }
-    const explorer = useExplorerStore.getState();
-    const normalized = path.replace(/\\/g, "/");
-    const root = rootPath.replace(/\\/g, "/").replace(/\/$/, "");
-    const parts = normalized.split("/").filter(Boolean);
-    const rootParts = root.split("/").filter(Boolean);
-    // Expand every ancestor below workspace root so the target entry becomes visible.
-    for (let i = rootParts.length; i < parts.length - 1; i++) {
-      const dir = parts.slice(0, i + 1).join("/");
-      if (!explorer.expanded.has(dir)) await explorer.toggleDir(workspaceId, dir);
+    if (onRevealInWorkspace) {
+      onRevealInWorkspace(workspaceId, path);
+    } else {
+      window.dispatchEvent(new CustomEvent("roc:reveal-workspace", { detail: { workspaceId, path } }));
     }
-    explorer.select(path);
-    window.dispatchEvent(new CustomEvent("roc:reveal-explorer", { detail: { path } }));
-  }, [workspaceId, rootPath]);
+  }, [workspaceId, onRevealInWorkspace]);
 
-  // 打开的文件左侧 Explorer 树不联动（2026-09 用户反馈）——之前只有手动点标签页/
-  // 面包屑才会调 `revealInExplorer`，AI 工具面板打开文件（`App.tsx` 的
-  // `onOpenFile` 直接调 `openPreview`）完全绕过了这条路径。改成响应式：只要
-  // "当前激活的文件"变了（不管是谁触发的——Explorer 点击、AI 面板打开、标签页
-  // 切换），都自动展开/定位一次，不用每个打开文件的入口各自记得调用一遍。
-  // 幂等操作（展开已展开的目录、选中已选中的项）重复调用无副作用，不需要额外
-  // 判断"是不是已经点过 Explorer 触发的"。
+  // 打开的文件联动：只要"当前激活的文件"变了（不管是谁触发的——文件树点击、AI
+  // 面板打开、标签页切换），都自动展开/定位一次，不用每个打开文件的入口各自记得
+  // 调用一遍。幂等操作（展开已展开的目录、选中已选中的项）重复调用无副作用。
   React.useEffect(() => {
     if (active?.path) void revealInExplorer(active.path);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -217,13 +229,12 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
 
   const language = active ? detectLanguage(active.path) : "plaintext";
   const isMarkdown = language === "markdown";
-  // HTML 文件预览（2026-08-29 需求）：和 Markdown 预览共用同一套"编辑/预览切换"
-  // 交互（Ctrl+Shift+V、同一块区域互斥展示），只是渲染方式不同——Markdown 渲染出的
-  // 是一段 HTML 片段，用 dangerouslySetInnerHTML 塞进当前页面就行；用户打开的
-  // *.html 文件本身是一份完整文档（可能带 <style>/<script>/<meta charset>），
-  // 必须用 <iframe> 给它一个独立的文档上下文才能正确渲染，不能直接扔进
-  // dangerouslySetInnerHTML（那样会当成 body 片段解析，<head> 里的东西全部丢失，
-  // <script> 也不会执行）。
+  // HTML 文件预览：和 Markdown 预览共用同一套"编辑/预览切换"交互（Ctrl+Shift+V、
+  // 同一块区域互斥展示），只是渲染方式不同——Markdown 渲染出的是一段 HTML 片段，用
+  // dangerouslySetInnerHTML 塞进当前页面就行；用户打开的 *.html 文件本身是一份
+  // 完整文档（可能带 <style>/<script>/<meta charset>），必须用 <iframe> 给它一个
+  // 独立的文档上下文才能正确渲染，不能直接扔进 dangerouslySetInnerHTML（那样会
+  // 当成 body 片段解析，<head> 里的东西全部丢失，<script> 也不会执行）。
   const isHtml = language === "html";
   const canPreview = isMarkdown || isHtml;
   // 只在预览真正打开时才解析，避免每次敲字符都跑一遍 marked（非 Markdown 文件更是完全不需要）。
@@ -233,9 +244,9 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
   );
 
   // HTML 预览的 srcDoc 内容——不能直接用 active.content：iframe srcdoc 里的相对路径
-  // 资源引用（<link href>/<script src>/<img src>）默认相对宿主页面（roc_desk 自己
-  // 的地址）解析，会 404，引用了外部 CSS/JS 的页面预览出来一片白屏（2026-08-28
-  // 用户反馈）。打开预览时异步把这些资源抓下来内联成 data URL 再喂给 iframe，见
+  // 资源引用（<link href>/<script src>/<img src>）默认相对宿主页面（本工具自己
+  // 的地址）解析，会 404，引用了外部 CSS/JS 的页面预览出来一片白屏。打开预览时
+  // 异步把这些资源抓下来内联成 data URL 再喂给 iframe，见
   // `utils/inlineHtmlResources.ts`。转换过程中先显示原始内容（没有外部资源的简单
   // 页面本来就能正常显示，不用等），转换完成后再替换成内联版本。
   const [htmlPreviewSrc, setHtmlPreviewSrc] = React.useState<string | null>(null);
@@ -266,11 +277,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
     };
   }, [isHtml, previewOpen, active?.path, active?.content, workspaceId]);
 
-  // 搜索面板点一个匹配行之后要求跳转（DESIGN.md 左侧目录树搜索功能）：这里统一处理
-  // "文件已经打开、只是切换 active" 和 "editor 实例刚挂载" 两种情况——后者靠
-  // `active?.path` 变化触发这个 effect 重跑，届时子组件 <Editor> 的 onMount 已经在
-  // 同一次 commit 里跑过（子组件的挂载 effect 先于父组件自己的 effect），
-  // editorRef.current 保证已经是最新的。
+  // 搜索面板点一个匹配行之后要求跳转：这里统一处理"文件已经打开、只是切换
+  // active" 和 "editor 实例刚挂载" 两种情况——后者靠 `active?.path` 变化触发这个
+  // effect 重跑，届时子组件 <Editor> 的 onMount 已经在同一次 commit 里跑过（子
+  // 组件的挂载 effect 先于父组件自己的 effect），editorRef.current 保证已经是
+  // 最新的。
   React.useEffect(() => {
     if (!pendingReveal || !editorRef.current) return;
     if (pendingReveal.path !== active?.path) return;
@@ -279,9 +290,9 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
     editor.setPosition({ lineNumber: pendingReveal.line, column: 1 });
     editor.focus();
 
-    // 点亮这个文件命中的全部位置（不只是点击跳转到的那一行），用户原话："通过搜索
-    // 结果打开后的文本文件，需要点亮搜索到的内容"。字符级精确高亮（不是整行背景色），
-    // 复用后端 SearchMatch 已经算好的字符下标，Monaco 的列号是 1-based 所以要 +1。
+    // 点亮这个文件命中的全部位置（不只是点击跳转到的那一行）。字符级精确高亮
+    // （不是整行背景色），复用后端 SearchMatch 已经算好的字符下标，Monaco 的
+    // 列号是 1-based 所以要 +1。
     if (pendingReveal.highlights && pendingReveal.highlights.length > 0) {
       const decorations = pendingReveal.highlights.map((h) => ({
         range: new Range(h.line, h.start + 1, h.line, h.end + 1),
@@ -305,17 +316,18 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
       await save(workspaceId, activePath);
       push("success", "已保存");
       // 保存成功后增量重建这一个文件的符号索引，让"转到定义"很快就能看到新写的
-      // 函数/类型——不用等下次重新打开工作区触发全量扫描。游离文件没有工作区可挂，
-      // 不接这个索引。
+      // 函数/类型——不用等下次重新打开根目录触发全量扫描。既没有工作区又没有
+      // 本地根目录（单个游离文件）时没有索引可挂，不接这个逻辑。
       const savedBuf = useEditorStore.getState().buffers[activePath];
-      if (workspaceId && savedBuf?.origin === "workspace" && savedBuf.kind === "text") {
-        void symbolService.reindexFile(workspaceId, activePath, savedBuf.content).catch(() => {});
+      const symbolRoot = workspaceId ?? (rootPath || null);
+      if (symbolRoot && savedBuf?.kind === "text") {
+        void symbolService.reindexFile(symbolRoot, activePath, savedBuf.content).catch(() => {});
       }
     } catch (e) {
       push("error", `保存失败：${formatError(e)}`, { label: "重试保存", onClick: handleSave });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, activePath]);
+  }, [workspaceId, activePath, rootPath]);
 
   const handleOpenExternally = React.useCallback(async () => {
     if (!activePath || !active) return;
@@ -344,10 +356,6 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
             title={diff ? `${diff.leftPath}  ↔  ${diff.rightPath}` : path}
             onClick={() => {
               setActive(path);
-              // 点标签页联动左侧 Explorer 选中当前文件（2026-09 用户需求，参考
-              // VS Code 的 "Auto Reveal"）——游离文件（不属于工作区）和对比标签
-              // 没有对应的 Explorer 条目可选，跳过；`revealInExplorer` 已经是
-              // 面包屑点击复用的同一套"展开祖先目录 + 选中"逻辑，不需要另写一份。
               if (buf?.origin === "workspace") void revealInExplorer(path);
             }}
             onDoubleClick={() => buf && pin(path)}
@@ -402,9 +410,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
   // PDF 标签切走再切回来会整个重新加载、滚动位置也跳回顶部——原因是内容区只按
   // `active.kind` 走三元分支渲染，切到别的标签时 `isPdf` 变 false，React 直接把
   // 整棵 `<PdfPreview>` 子树连同它内部状态（pdf.js 文档、滚动位置、缩放、搜索）
-  // 卸载掉；切回来时是全新挂载，不是恢复（2026-09 用户反馈）。修法参考同一个
-  // 组件里 Markdown/HTML 预览已经用过的思路（439 行注释）：不给每个 PDF 标签各自
-  // 一份"只在 active 时挂载"的实例，而是给**所有当前打开着的** PDF 标签各常驻一份
+  // 卸载掉；切回来时是全新挂载，不是恢复。修法：不给每个 PDF 标签各自一份"只在
+  // active 时挂载"的实例，而是给**所有当前打开着的** PDF 标签各常驻一份
   // `PdfPreview`，用 `visible` 控制 `display`，标签页存在期间实例不销毁。下面
   // `isPdf` 分支因此改成渲染 `null`——真正可见的那个实例由 `pdfLayer` 提供。
   const pdfBuffers = order
@@ -414,12 +421,10 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
     <PdfPreview key={buf.path} base64={buf.content.split(",")[1] ?? ""} visible={buf.path === activePath} />
   ));
 
-  // Windows 本地工作区下 `p`（buffer 路径，来自 Explorer 的 `entry.path`，后端
-  // `fsops/local.rs::list_dir` 统一正规化成 `/`）和 `rootPath`（原生目录选择器
-  // 选出来的，保留系统原样的 `\`）分隔符不一致，直接 `startsWith` 永远不命中，
-  // 面包屑会显示完整绝对路径的每一段而不是相对路径（2026-09 用户反馈同一个根因
-  // 在 Explorer"复制相对路径"上的表现，这里是同一个 bug 的另一个出现点）。两边都
-  // 正规化成 `/` 再按小写比较——Windows 路径大小写不敏感。
+  // Windows 本地根目录下 `p`（buffer 路径，来自文件树，后端统一正规化成 `/`）和
+  // `rootPath`（原生目录选择器选出来的，保留系统原样的 `\`）分隔符不一致，直接
+  // `startsWith` 永远不命中，面包屑会显示完整绝对路径的每一段而不是相对路径。
+  // 两边都正规化成 `/` 再按小写比较——Windows 路径大小写不敏感。
   const relOf = (p: string) => {
     const normalizedRoot = rootPath.replace(/\\/g, "/").replace(/\/$/, "");
     const normalizedPath = p.replace(/\\/g, "/");
@@ -475,7 +480,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
             fontSize: 13,
           }}
         >
-          {workspaceId ? "从左侧 Explorer 中选择一个文件开始编辑" : "拖拽文件到此处，或按 Ctrl+O 打开文件"}
+          {workspaceId ? "从左侧文件树中选择一个文件开始编辑" : "拖拽文件到此处，或按 Ctrl+O 打开文件"}
         </div>
         {pdfLayer}
       </div>
@@ -502,7 +507,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
                 if (i === 0 || !active) return;
                 const separator = active.path.includes("\\") ? "\\" : "/";
                 const pathSegs = active.path.split(/[/\\]/).filter(Boolean);
-                // standalone 面包屑包含“本地文件”前缀；工作区面包屑第一项是工作区名，
+                // standalone 面包屑包含"本地文件"前缀；工作区面包屑第一项是工作区名，
                 // 后续项是相对根目录路径。始终把点击项映射回完整绝对路径。
                 const target = active.origin === "standalone"
                   ? pathSegs.slice(0, i).join(separator)
@@ -609,16 +614,12 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
               // 属于已经销毁的上一个实例，不能带过来复用。
               highlightDecorationsRef.current = null;
 
-              // 重启 roc_desk 后重新进工作区时，标签页恢复（App.tsx 的 localStorage
-              // 恢复逻辑）会连续挂载好几个 Editor 实例，还会和"自动打开一个终端"的
-              // 副作用并发抢布局——2026-08-29 用户反馈"重启再进工作区，一部分可编辑
-              // 文件显示不出来"，用 CDP 远程调试连进实际渲染的页面查过：内容其实一直
-              // 是对的（`fs_read_file` 返回正确文本），问题是 Monaco 自己的根节点在
-              // 那个繁忙的挂载瞬间把容器测量成了 5x5 像素（父级 flex 容器当时还没
-              // 完全撑开），`automaticLayout` 的 ResizeObserver 之后没有再纠正回来，
-              // 切一下标签页（强制卸载重挂载 Monaco，此时布局已经稳定）就会恢复正常，
-              // 证实是挂载时机问题，不是数据问题。等浏览器完成当前这轮布局/绘制后
-              // （下一帧）再手动调一次 layout() 强制重新测量，避免赶上这个繁忙窗口。
+              // 标签页恢复（localStorage 恢复逻辑）会连续挂载好几个 Editor 实例，
+              // 容易和其它布局副作用并发抢布局——Monaco 自己的根节点在那个繁忙的
+              // 挂载瞬间可能把容器测量成很小的像素（父级 flex 容器当时还没完全
+              // 撑开），`automaticLayout` 的 ResizeObserver 之后不一定会再纠正回来。
+              // 等浏览器完成当前这轮布局/绘制后（下一帧）再手动调一次 layout()
+              // 强制重新测量，避免赶上这个繁忙窗口。
               requestAnimationFrame(() => editor.layout());
 
               const pos = editor.getPosition();
@@ -691,10 +692,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ workspaceId, workspaceNa
         )}
       </div>
       )}
-      {/* 底部状态栏（参考 VS Code 右下角编码/语言/光标位置徽标）：文件编码之前只是
-          工具栏里一个不起眼的小按钮，容易被当成普通图标划过去（2026-08-29 用户反馈
-          "要在某个地方能看到文件编码"）——挪到固定可见的状态栏，不需要点开任何东西
-          就能看到当前编码，点击仍然能唤出"重新打开为"/"保存为"两组动作。 */}
+      {/* 底部状态栏（参考 VS Code 右下角编码/语言/光标位置徽标）。 */}
       {!isPreviewOnly && (
         <div className="editor-status-bar">
           <div className="status-left">

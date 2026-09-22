@@ -1,14 +1,15 @@
-﻿[package]
+[package]
 name = "roc_desk_editor_standalone"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 build = "build.rs"
 
 [dependencies]
 roc_desk_editor = { path = "../lib" }
+roc_desk_explorer = { git = "https://github.com/swimhigh/roc_desk-explorer", package = "roc_desk_explorer", tag = "v0.2.0" }
 tauri = { version = "2", features = ["wry"] }
 serde = { version = "1", features = ["derive"] }
-roc_desk_common = { git = "https://github.com/swimhigh/roc_desk-common", package = "roc_desk_common", tag = "common-v0.2.6" }
+roc_desk_common = { git = "https://github.com/swimhigh/roc_desk-common", package = "roc_desk_common", tag = "common-v0.4.0" }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -16,4 +17,3 @@ tauri-build = { version = "2", features = [] }
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-

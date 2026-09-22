@@ -1,0 +1,35 @@
+{
+  "name": "@roc_desk/tool-editor",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.6",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "dompurify": "^3.4.13",
+    "lucide-react": "^0.469",
+    "mammoth": "^1.12.1",
+    "marked": "^18.0.10",
+    "monaco-editor": "^0.52",
+    "pdfjs-dist": "^5.7.284",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "xlsx": "^0.18.5",
+    "zustand": "^5"
+  },
+  "devDependencies": {
+    "@types/dompurify": "^3.0.5",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4"
+  }
+}
