@@ -8,3 +8,5 @@ pub const TOOL_DESCRIPTION: &str = "编辑器：文本、代码、二进制与�
 pub fn tool_info() -> (&'static str, &'static str) {
     (TOOL_NAME, TOOL_DESCRIPTION)
 }
+
+pub use roc_desk_common::fsops::{FileOps, LocalFileOps};
