@@ -34,3 +34,7 @@ pub mod ocr;
 pub mod symbols;
 
 pub use roc_desk_common::fsops::{FileOps, LocalFileOps};
+/// Re-exported so downstream crates (host, `standalone`) can reach the 19
+/// local filesystem commands via `roc_desk_editor::roc_desk_explorer::cmd::*`
+/// without adding their own explicit dependency on `roc_desk-explorer`.
+pub use roc_desk_explorer;
