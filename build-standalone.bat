@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 echo Building roc_desk-editor (Release)...
-cargo build --release -p roc_desk_editor_standalone
+cargo build --release --features custom-protocol -p roc_desk_editor_standalone
 if errorlevel 1 (
   echo BUILD FAILED: roc_desk-editor
   exit /b 1
