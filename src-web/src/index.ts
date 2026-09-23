@@ -12,7 +12,6 @@ export { useEditorStore, isDiffId } from "./stores/editorStore";
 export type { EditorBuffer, DiffBuffer } from "./stores/editorStore";
 
 export { CodeEditor } from "./components/Editor/CodeEditor";
-export { StandaloneFileTree } from "./components/Editor/StandaloneFileTree";
 export { LocalFileTree } from "./components/Editor/LocalFileTree";
 
 export * from "./types/bindings";

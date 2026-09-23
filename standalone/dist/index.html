@@ -1,1 +1,13 @@
-<!doctype html><meta charset="utf-8"><title>???</title><style>body{font:16px system-ui;margin:24px;background:#111827;color:#eee}input,textarea,button{font:inherit;padding:8px;margin:4px}textarea{width:95%;height:70vh;background:#1f2937;color:#eee}button{cursor:pointer}</style><h1>???</h1><input id="path" style="width:70%" placeholder="????"><button onclick="load()">??</button><button onclick="save()">??</button><p id="status"></p><textarea id="text"></textarea><script>const {invoke}=window.__TAURI__.core;let mtime=null;async function load(){try{let x=await invoke('local_read_file',{path:path.value});text.value=x.text;mtime=x.mtime;status.textContent='??? '+x.total_size+' ??'}catch(e){status.textContent=e}}async function save(){try{let x=await invoke('local_write_file',{path:path.value,content:text.value,expectedMtime:mtime});status.textContent='???';if(x.Written)mtime=x.Written.mtime}catch(e){status.textContent=e}}</script>
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>编辑器</title>
+    <script type="module" crossorigin src="/assets/index-DSa36jfD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-2kM-YSUW.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

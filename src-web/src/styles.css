@@ -12,6 +12,8 @@
   --font-mono: "Cascadia Code", Consolas, monospace;
   --radius-sm: 4px;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --border-subtle: #333;
+  --accent: #3b82f6;
 }
 
 html, body, #root {
@@ -70,6 +72,14 @@ html, body, #root {
 
 .tree-item { display: flex; align-items: center; gap: 4px; padding: 3px 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
 .tree-item.active { background: #2f3542; }
+.tree-item.multi-selected { background: #24344d; }
 .tree-icon { width: 14px; height: 14px; flex-shrink: 0; }
 .tree-icon.is-dir { color: #e0af68; }
+.tree-name { overflow: hidden; text-overflow: ellipsis; }
+.tree-rename-input { flex: 1; background: var(--bg-base); color: var(--text-primary); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; font-size: 13px; }
 .project-tree { border-right: 1px solid #333; }
+
+.quick-tool-btn { background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.quick-tool-btn:hover { background: var(--bg-surface-raised); }
+
+.btn.danger-strong { background: #7f1d1d; border-color: #991b1b; color: #fecaca; }

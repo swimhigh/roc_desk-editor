@@ -4,6 +4,8 @@ use roc_desk_editor::symbols::SymbolIndexState;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(SymbolIndexState::default())
         .invoke_handler(tauri::generate_handler![
             // Local filesystem surface, reused as-is from roc_desk-explorer --
