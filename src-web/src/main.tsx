@@ -1,7 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./monacoSetup";
 import { LocalFileTree } from "./components/Editor/LocalFileTree";
 import { EditorPane } from "./EditorPane";
+import { ThemeToggle } from "./components/shared/ThemeToggle";
 import { useEditorStore } from "./stores/editorStore";
 import "./styles.css";
 
@@ -19,16 +21,23 @@ import "./styles.css";
 const App: React.FC = () => {
   const [root, setRoot] = React.useState<string | null>(null);
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
-      <div style={{ width: 260, flexShrink: 0, minHeight: 0 }}>
-        <LocalFileTree
-          root={root}
-          onRootChange={setRoot}
-          onOpenFile={(p) => void useEditorStore.getState().openStandaloneFile(p)}
-        />
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div className="top-bar">
+        <span className="top-bar-title">编辑器</span>
+        <div className="top-bar-spacer" />
+        <ThemeToggle />
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <EditorPane workspaceId={null} rootPath={root ?? undefined} />
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <div style={{ width: 260, flexShrink: 0, minHeight: 0 }}>
+          <LocalFileTree
+            root={root}
+            onRootChange={setRoot}
+            onOpenFile={(p) => void useEditorStore.getState().openStandaloneFile(p)}
+          />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <EditorPane workspaceId={null} rootPath={root ?? undefined} />
+        </div>
       </div>
     </div>
   );
