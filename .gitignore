@@ -6,3 +6,7 @@ bin/
 src-web/node_modules/
 src-web/dist/
 
+# 前端构建产物——standalone 的 `beforeBuildCommand`/CI 会重新生成，不应该跟源码
+# 一起提交。
+standalone/dist/
+
