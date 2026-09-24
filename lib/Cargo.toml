@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 roc_desk_core = { git = "https://github.com/swimhigh/roc_desk-common", package = "roc_desk_core", tag = "common-v0.6.0" }
 roc_desk_common = { git = "https://github.com/swimhigh/roc_desk-common", package = "roc_desk_common", tag = "common-v0.6.0" }
-roc_desk_explorer = { git = "https://github.com/swimhigh/roc_desk-explorer", package = "roc_desk_explorer", tag = "v0.2.4" }
+roc_desk_explorer = { git = "https://github.com/swimhigh/roc_desk-explorer", package = "roc_desk_explorer", tag = "v0.2.5" }
 tauri = { version = "2" }
 tokio = { version = "1", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }

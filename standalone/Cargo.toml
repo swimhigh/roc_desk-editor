@@ -6,7 +6,7 @@ build = "build.rs"
 
 [dependencies]
 roc_desk_editor = { path = "../lib" }
-roc_desk_explorer = { git = "https://github.com/swimhigh/roc_desk-explorer", package = "roc_desk_explorer", tag = "v0.2.4" }
+roc_desk_explorer = { git = "https://github.com/swimhigh/roc_desk-explorer", package = "roc_desk_explorer", tag = "v0.2.5" }
 tauri = { version = "2", features = ["wry"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
