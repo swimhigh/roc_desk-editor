@@ -25,4 +25,9 @@ export type { EditorBuffer, DiffBuffer } from "./stores/editorStore";
 export { CodeEditor } from "./components/Editor/CodeEditor";
 export { LocalFileTree } from "./components/Editor/LocalFileTree";
 
+export { useFileTreeOperations, parentOf, baseName, flattenVisible } from "./hooks/useFileTreeOperations";
+export type { FileTreeBackend } from "./hooks/useFileTreeOperations";
+
+export { fsService } from "./services/fsService";
+
 export * from "./types/bindings";
