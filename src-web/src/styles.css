@@ -150,10 +150,68 @@ html, body, #root {
 .btn.sm { font-size: 12px; }
 .btn.danger-strong { background: #7f1d1d; border-color: #991b1b; color: #fecaca; }
 
-.editor-tabs { display: flex; overflow-x: auto; background: var(--bg-surface-raised); border-bottom: 1px solid var(--border-subtle); }
-.editor-tab { display: flex; align-items: center; gap: 4px; padding: 6px 10px; cursor: pointer; border-right: 1px solid var(--border-subtle); white-space: nowrap; }
-.editor-tab.active { background: var(--bg-base); }
-.editor-tab-close { border: none; background: transparent; color: inherit; cursor: pointer; }
+/* 和宿主 roc_desk.exe 的编辑器标签页同一套尺寸（照抄自
+   roc_desk/src-web/src/styles/components.css）——2026-10 用户反馈这个独立
+   exe 的标签页比宿主明显偏大（没有限定高度、padding/字号都比宿主宽松）。 */
+.editor-tabs {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.editor-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 6px 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border-subtle);
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+  position: relative;
+}
+.editor-tab:hover { color: var(--text-primary); }
+.editor-tab.active {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+.editor-tab.active::after {
+  content: "";
+  position: absolute;
+  top: -1px; left: 0; right: 0;
+  height: 2px;
+  background: var(--accent);
+}
+.editor-tab.preview .editor-tab-name { font-style: italic; }
+.editor-tab .dirty-dot {
+  width: 6px; height: 6px;
+  border-radius: 999px;
+  background: var(--text-secondary);
+  flex-shrink: 0;
+}
+.editor-tab-close {
+  width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.editor-tab-close svg { width: 12px; height: 12px; }
+.editor-tab:hover .editor-tab-close,
+.editor-tab.active .editor-tab-close { opacity: 1; }
+.editor-tab-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+.editor-tab-diff-icon { width: 12px; height: 12px; flex-shrink: 0; color: var(--text-secondary); }
+.editor-tab-standalone-icon { width: 12px; height: 12px; flex-shrink: 0; color: var(--text-secondary); }
 .dirty-dot { width: 6px; height: 6px; border-radius: 50%; background: #e0af68; display: inline-block; }
 
 .editor-toolbar { display: flex; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--border-subtle); }
