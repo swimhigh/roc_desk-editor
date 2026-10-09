@@ -10,6 +10,11 @@ roc_desk_explorer = { git = "https://github.com/swimhigh/roc_desk-explorer", pac
 tauri = { version = "2", features = ["wry"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# Windows 文件关联（"打开方式"/双击已关联的 .txt 等文件）：资源管理器把文件路径
+# 拼进 argv 启动一个新进程，这个插件负责在已有窗口实例跑着的时候把新进程的 argv
+# 转发给它而不是真的再开一个窗口（和 host roc_desk.exe 同一套机制，见
+# roc_desk/src-tauri/src/lib.rs 顶部注释）。
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 roc_desk_common = { git = "https://github.com/swimhigh/roc_desk-common", package = "roc_desk_common", tag = "common-v0.13.0" }
 
