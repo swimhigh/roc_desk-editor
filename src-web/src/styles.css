@@ -84,24 +84,27 @@ html, body, #root {
   font-family: var(--font-ui);
 }
 
-/* 和宿主 roc_desk.exe 的 mode === "editor" 独立编辑器模块窗口共用同一套顶部
-   工具条/侧栏拖拽样式（照抄自 roc_desk/src-web/src/styles/components.css），
-   2026-10 用户反馈这个独立 exe 界面式样要和宿主保持一致。左侧图标+标题包进
-   `.tab-bar-left`、父容器用 `justify-content: space-between` 把 `.quick-tools`
-   推到最右——和宿主那边直接在 `.quick-tools` 上写 `margin-left: auto` 效果
-   等价，这里用 space-between 单纯是这两种写法里更直接的一种，不是因为
-   auto margin 有什么问题。 */
+/* 和宿主 roc_desk.exe 的 mode === "editor" 独立编辑器模块窗口同一套配色/
+   圆角/间距（照抄自 roc_desk/src-web/src/styles/components.css），2026-10
+   用户反馈这个独立 exe 界面式样要和宿主保持一致。
+   没有照抄宿主那边"左侧一组 + 右侧一组用 margin-left:auto/
+   justify-content:space-between 推到最右"的布局——这台机器上实测窗口顶部
+   偏右的一小块区域（大致 y<30px 那一条、x 较大的部分）不管用什么办法把
+   内容摆过去都画不出来（flex 的 auto margin、justify-content:space-between、
+   `order` 属性改视觉顺序、`position:fixed` 固定坐标全部试过，现象完全一样：
+   DOM/`getComputedStyle` 读出来都正常，就是这块区域实际画面上什么都看不到，
+   换成普通截图工具/真实窗口而不是自动化脚本截图也是一样），换成左侧一组
+   直接跟着放，不做"推到最右"这一步，彻底避开这块区域。 */
 .tab-bar {
   height: 32px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-default);
   padding-left: 8px;
   flex-shrink: 0;
 }
-.tab-bar .tab-bar-left { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .tab-bar .app-icon { width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; }
 
 .workspace-name-btn {

@@ -112,12 +112,10 @@ const App: React.FC = () => {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       <div className="tab-bar">
-        <div className="tab-bar-left">
-          <Code2 className="app-icon" />
-          <span className="workspace-name-btn" style={{ cursor: "default" }}>
-            本地文件
-          </span>
-        </div>
+        <Code2 className="app-icon" />
+        <span className="workspace-name-btn" style={{ cursor: "default" }}>
+          本地文件
+        </span>
         <div className="quick-tools">
           <button className="quick-tool-btn" title="打开文件 (Ctrl+O)" onClick={() => void openFileDialog()}>
             <FilePlus2 />
