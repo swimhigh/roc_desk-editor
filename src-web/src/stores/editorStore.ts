@@ -124,6 +124,12 @@ interface EditorState {
   /** 搜索面板点一个匹配行 → 要求编辑器跳转到该文件的这一行（DESIGN.md 左侧目录树
    * 搜索功能，2026-08-18 需求）。CodeEditor 消费后自己清空，不在这里自动清。 */
   pendingReveal: PendingReveal | null;
+  /** "最近打开"记录，最新的在最前面——2026-10 需求，和"恢复上次会话"是两套
+   * 独立的持久化（见 `RECENT_FILES_KEY`/`SESSION_KEY` 的注释）。 */
+  recentFiles: string[];
+  addRecentFile: (path: string) => void;
+  removeRecentFile: (path: string) => void;
+  clearRecentFiles: () => void;
 
   /** 单击文件：复用/替换预览标签，而不是无限开新标签 */
   openPreview: (workspaceId: string, path: string) => Promise<void>;
@@ -228,6 +234,57 @@ const backendFor = (buf: EditorBuffer, workspaceId: string | null): FileBackend 
  * 淘汰最久没被看过的那一个腾位置，而不是无限累积——标签开多了标签栏本身就
  * 挤得看不清文件名，早期这类反馈也出现过。 */
 const MAX_TABS = 20;
+
+/** 2026-10 用户需求："roc_desk-editor.exe 独立运行时应该记住上次打开时打开了
+ * 哪些文件列表，下次再点开时保持原样"，以及"open recent"最近打开记录——这个
+ * 独立 exe 没有宿主那种"工作区"概念，所有标签都是 `origin: "standalone"` 的
+ * 游离文件（见 `main.tsx` 里 `workspaceId={null}`），用 `localStorage` 就够，
+ * 不需要像宿主那样走后端 SQLite（这个 exe 压根没有本地数据库）。*/
+const RECENT_FILES_KEY = "roc_desk-editor-recent-files";
+const MAX_RECENT_FILES = 20;
+/** 和"最近打开"是两回事：这个存的是"关闭时还开着的标签"，用来在下次启动时
+ * 原样恢复标签栏；"最近打开"是不断增长的历史记录，关掉的文件也留在里面。 */
+const SESSION_KEY = "roc_desk-editor-last-session";
+
+function readJsonArray(key: string): string[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStorage(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // 隐私模式/配额已满导致写入失败——不影响当前这次运行，只是下次启动时
+    // "最近打开"/"恢复上次会话"拿不到数据，静默忽略即可。
+  }
+}
+
+interface PersistedSession {
+  paths: string[];
+  activePath: string | null;
+}
+
+function loadSession(): PersistedSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.paths)) return null;
+    return {
+      paths: parsed.paths.filter((p: unknown): p is string => typeof p === "string"),
+      activePath: typeof parsed.activePath === "string" ? parsed.activePath : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /** 达到上限时选出要淘汰的标签：按 `lastAccess` 从旧到新排，跳过有未保存修改
  * 的 buffer（`dirty`）——"开太多标签"是无害操作，不该附带把用户没保存的编辑
@@ -397,9 +454,35 @@ export const useEditorStore = create<EditorState>((set, get) => {
   pendingReveal: null,
 
   openPreview: (workspaceId, path) => openFromBackend("workspace", workspaceBackend(workspaceId), path),
-  openStandaloneFile: (path) => openFromBackend("standalone", standaloneBackend, path),
+  // 只在真正打开成功后才记进"最近打开"——`openFromBackend` 内部任何一步失败
+  // （文件已被删除/没有权限等）都会抛出，不会走到这一行，避免把打不开的路径
+  // 也记进历史。
+  openStandaloneFile: async (path) => {
+    await openFromBackend("standalone", standaloneBackend, path);
+    get().addRecentFile(path.replace(/\\/g, "/"));
+  },
   showStandaloneShell: () => set({ standaloneShellVisible: true }),
   hideStandaloneShell: () => set({ standaloneShellVisible: false }),
+
+  recentFiles: readJsonArray(RECENT_FILES_KEY),
+  addRecentFile: (path) => {
+    set((s) => {
+      const recentFiles = [path, ...s.recentFiles.filter((p) => p !== path)].slice(0, MAX_RECENT_FILES);
+      writeStorage(RECENT_FILES_KEY, recentFiles);
+      return { recentFiles };
+    });
+  },
+  removeRecentFile: (path) => {
+    set((s) => {
+      const recentFiles = s.recentFiles.filter((p) => p !== path);
+      writeStorage(RECENT_FILES_KEY, recentFiles);
+      return { recentFiles };
+    });
+  },
+  clearRecentFiles: () => {
+    writeStorage(RECENT_FILES_KEY, []);
+    set({ recentFiles: [] });
+  },
 
   openDiff: async (workspaceId, leftPath, rightPath) => {
     const already = Object.values(get().diffs).find((d) => d.leftPath === leftPath && d.rightPath === rightPath);
@@ -664,3 +747,41 @@ export const useEditorStore = create<EditorState>((set, get) => {
     }),
   };
 });
+
+// 2026-10 需求："记住上次打开时打开了哪些文件列表，下次再点开时保持原样"——
+// 监听标签顺序/当前激活标签的变化，debounce 写进 localStorage。用 `subscribe`
+// 而不是在每个改 `order`/`activePath` 的 action 里各自调用一次保存：这个 store
+// 里能改这两个字段的 action 有十来个（open/close/closeOthers/closeToLeft/
+// closeToRight/setActive/openDiff...），挨个加一遍既啰嗦又容易漏，订阅状态变化
+// 是唯一一处、不会漏的收口点。只存真实文件路径（排除 `diff:` 对比标签——重启后
+// 没有意义去恢复一个临时对比视图）。
+let sessionSaveTimer: ReturnType<typeof setTimeout> | null = null;
+useEditorStore.subscribe((state, prevState) => {
+  if (state.order === prevState.order && state.activePath === prevState.activePath) return;
+  if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = setTimeout(() => {
+    const paths = state.order.filter((p) => !isDiffId(p) && state.buffers[p]?.origin === "standalone");
+    const activePath = state.activePath && paths.includes(state.activePath) ? state.activePath : null;
+    writeStorage(SESSION_KEY, { paths, activePath } satisfies PersistedSession);
+  }, 300);
+});
+
+/** 启动时调用一次（`main.tsx`）：按上次关闭时的顺序把标签全部重新打开。单个
+ * 文件在这期间被移动/删除导致打不开，只跳过这一个，不影响恢复其余标签——
+ * 显式带文件参数启动（Windows"打开方式"/拖拽关联）优先于这个，调用方负责
+ * 判断"这次启动有没有带文件参数"，带了就不该调这个函数（不然会把上次的一堆
+ * 旧标签和这次明确要打开的新文件混在一起）。 */
+export async function restoreLastSession(): Promise<void> {
+  const session = loadSession();
+  if (!session || session.paths.length === 0) return;
+  for (const path of session.paths) {
+    try {
+      await useEditorStore.getState().openStandaloneFile(path);
+    } catch {
+      // 文件已被移动/删除/无权限——跳过，继续恢复其余标签。
+    }
+  }
+  if (session.activePath && useEditorStore.getState().buffers[session.activePath]) {
+    useEditorStore.getState().setActive(session.activePath);
+  }
+}

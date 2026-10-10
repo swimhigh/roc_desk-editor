@@ -3,13 +3,14 @@ import ReactDOM from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openFilePickerDialog } from "@tauri-apps/plugin-dialog";
-import { Code2, FilePlus2 } from "lucide-react";
+import { Code2, FilePlus2, History } from "lucide-react";
 import "./monacoSetup";
 import { LocalFileTree } from "./components/Editor/LocalFileTree";
 import { EditorPane } from "./EditorPane";
 import { ThemeToggle } from "./components/shared/ThemeToggle";
+import { ContextMenu, type ContextMenuItem } from "./components/shared/ContextMenu";
 import { useToastStore } from "./components/shared/Toast";
-import { useEditorStore } from "./stores/editorStore";
+import { useEditorStore, restoreLastSession } from "./stores/editorStore";
 import { formatError } from "./utils/error";
 import "./styles.css";
 
@@ -47,9 +48,18 @@ const App: React.FC = () => {
   // `PendingOpenPaths` 里，这里挂载时取走一次；已运行实例收到的第二次启动
   // 转发走 `open-file-paths` 事件，两条路径最终都汇到同一个处理函数（和 host
   // `roc_desk.exe` 的 `App.tsx` 同一套机制）。
+  //
+  // 2026-10 需求："记住上次打开时打开了哪些文件列表，下次再点开时保持原样"——
+  // 但这次启动如果是带着明确文件参数来的（双击关联文件/拖到 exe 图标上），
+  // 这个诉求应该让位：用户这次的意图很明确是"打开这个文件"，不该把上次一堆
+  // 不相关的旧标签也一起糊上来，所以只在没有带文件参数时才恢复上次会话。
   React.useEffect(() => {
-    void invoke<string[]>("take_pending_open_paths").then((paths) => {
-      for (const p of paths) void useEditorStore.getState().openStandaloneFile(p);
+    void invoke<string[]>("take_pending_open_paths").then(async (paths) => {
+      if (paths.length > 0) {
+        for (const p of paths) void useEditorStore.getState().openStandaloneFile(p);
+      } else {
+        await restoreLastSession();
+      }
     });
   }, []);
 
@@ -77,6 +87,31 @@ const App: React.FC = () => {
       await useEditorStore.getState().openStandaloneFile(p).catch((e) => push("error", `打开失败：${formatError(e)}`));
     }
   }, [push]);
+
+  const recentFiles = useEditorStore((s) => s.recentFiles);
+  const [recentMenu, setRecentMenu] = React.useState<{ x: number; y: number } | null>(null);
+  const openRecent = React.useCallback(
+    async (path: string) => {
+      try {
+        await useEditorStore.getState().openStandaloneFile(path);
+      } catch (e) {
+        // 列表里的文件已经被移动/删除——把它从"最近打开"里摘掉，不然每次
+        // 点都报错、这条死记录永远留在列表里碍事。
+        useEditorStore.getState().removeRecentFile(path);
+        push("error", `打开失败：${formatError(e)}`);
+      }
+    },
+    [push],
+  );
+  const recentMenuItems: ContextMenuItem[] = React.useMemo(() => {
+    if (recentFiles.length === 0) return [{ label: "暂无最近打开的文件", onClick: () => {} }];
+    const items: ContextMenuItem[] = recentFiles.map((path) => ({
+      label: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
+      onClick: () => void openRecent(path),
+    }));
+    items.push({ label: "清空最近记录", onClick: () => useEditorStore.getState().clearRecentFiles(), danger: true, separatorBefore: true });
+    return items;
+  }, [recentFiles, openRecent]);
 
   // Ctrl+O 全局快捷键，和宿主同一套（`App.tsx` 对应那段注释）。
   React.useEffect(() => {
@@ -120,9 +155,22 @@ const App: React.FC = () => {
           <button className="quick-tool-btn" title="打开文件 (Ctrl+O)" onClick={() => void openFileDialog()}>
             <FilePlus2 />
           </button>
+          <button
+            className="quick-tool-btn"
+            title="最近打开"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setRecentMenu({ x: rect.left, y: rect.bottom + 4 });
+            }}
+          >
+            <History />
+          </button>
           <ThemeToggle />
         </div>
       </div>
+      {recentMenu && (
+        <ContextMenu x={recentMenu.x} y={recentMenu.y} items={recentMenuItems} onClose={() => setRecentMenu(null)} />
+      )}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         <div style={{ width: sidebarWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-surface)" }}>
           <LocalFileTree
